@@ -263,6 +263,26 @@ class Parser:
         return res.success(left)
 
 
+class Interpreter:
+    def visit(self, node):
+        method_name = f"visit_{type(node).__name__})"
+        method = getattr(self, method_name, self.no_visit_method)
+        return method(node)
+
+    def no_visit_method(self, node):
+        raise Exception(f"No visit_{type(node).__name__} method defined")
+
+    def visit_NumberNode(self, node):
+        pass
+
+    def visit_UnaryOpNode(self, node):
+        self.visit(node.node)
+
+    def visit_BinaryOpNode(self, node):
+        self.visit(node.left_node)
+        self.visit(node.right_node)
+
+
 def run(file_name, text):
     lexer = Lexer(file_name, text)
     tokens, error = lexer.make_tokens()
@@ -272,4 +292,10 @@ def run(file_name, text):
 
     parser = Parser(tokens)
     ast = parser.parse()
+
+    if ast.error:
+        return None, ast.error
+
+    interpreter = Interpreter()
+    interpreter.visit(ast.node)
     return ast.node, ast.error
