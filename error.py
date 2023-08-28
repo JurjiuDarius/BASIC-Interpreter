@@ -7,15 +7,15 @@ class Error:
 
     def as_string(self):
         result = f"{self.error_name}: {self.details}"
-        result += f"File {self.file_name}, line {self.pos_start.ln+1}"
+        result += f"File {self.pos_start.file_name}, line {self.pos_start.ln+1}"
         return result
 
 
 class IllegalCharError(Error):
-    def __init__(
-        self,
-        details,
-        pos_start,
-        pos_end,
-    ):
+    def __init__(self, pos_start, pos_end, details):
         super().__init__(pos_start, pos_end, "Illegal Character", details)
+
+
+class InvalidParsingError(Error):
+    def __init__(self, pos_start, pos_end, details):
+        super().__init__(pos_start, pos_end, "Invalid parsing error: ", details)
