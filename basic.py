@@ -1,4 +1,4 @@
-from error import IllegalCharError, InvalidParsingError
+from error import IllegalCharError, InvalidSyntaxError
 from nodes import *
 
 TT_INT = "TT_INT"
@@ -150,6 +150,15 @@ class BinaryOperationNode:
         return f"({self.left_node}, {self.op_tok}, {self.right_node})"
 
 
+class UnaryOperationNode:
+    def __init__(self, op_tok, node):
+        self.op_tok = op_tok
+        self.node = node
+
+    def __repr__(self):
+        return f"({self.op_tok}, {self.node})"
+
+
 class ParseResult:
     def __init__(self):
         self.error = None
@@ -181,7 +190,7 @@ class Parser:
         res = self.expression()
         if not res.error and self.current_tok.type != TT_EOF:
             return res.failure(
-                InvalidParsingError(
+                InvalidSyntaxError(
                     self.current_tok.pos_start,
                     self.current_tok.pos_end,
                     "Expected operator token",
@@ -202,12 +211,35 @@ class Parser:
     def factor(self):
         res = ParseResult()
         tok = self.current_tok
-        if tok.type in (TT_INT, TT_FLOAT):
+        if tok.type in (TT_PLUS, TT_MINUS):
+            res.register(self.advance())
+            factor = res.register(self.factor())
+            if res.error:
+                return res
+            return res.success(UnaryOperationNode(tok, factor))
+        elif tok.type in (TT_INT, TT_FLOAT):
             res.register(self.advance())
             return res.success(NumberNode(tok))
 
+        elif tok.type == TT_LPAREN:
+            res.register(self.advance())
+            expression = res.register(self.expression())
+            if res.error:
+                return res
+            if self.current_tok.type == TT_RPAREN:
+                res.register(self.advance())
+                return res.success(expression)
+            else:
+                return res.failure(
+                    InvalidSyntaxError(
+                        self.current_tok.pos_start,
+                        self.current_tok.pos_end,
+                        "Expected ')'",
+                    )
+                )
+
         return res.failure(
-            InvalidParsingError(tok.pos_start, tok.pos_end, "Expected int or float")
+            InvalidSyntaxError(tok.pos_start, tok.pos_end, "Expected int or float")
         )
 
     def expression(self):
