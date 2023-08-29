@@ -7,6 +7,7 @@ TT_PLUS = "PLUS"
 TT_MINUS = "MINUS"
 TT_MUL = "MUL"
 TT_DIV = "DIV"
+TT_POW = "^"
 TT_LPAREN = "LPAREN"
 TT_RPAREN = "RPAREN"
 TT_EOF = "EOF"
@@ -70,6 +71,10 @@ class Lexer:
 
             elif self.current_char == "/":
                 tokens.append(Token(TT_DIV, pos_start=self.pos))
+                self.advance()
+
+            elif self.current_char == "^":
+                tokens.append(Token(TT_POW, pos_start=self.pos))
                 self.advance()
 
             elif self.current_char == "(":
@@ -212,19 +217,10 @@ class Parser:
 
         return self.current_tok
 
-    def term(self):
-        return self.bin_op(self.factor, (TT_MUL, TT_DIV))
-
-    def factor(self):
+    def atom(self):
         res = ParseResult()
         tok = self.current_tok
-        if tok.type in (TT_PLUS, TT_MINUS):
-            res.register(self.advance())
-            factor = res.register(self.factor())
-            if res.error:
-                return res
-            return res.success(UnaryOperationNode(tok, factor))
-        elif tok.type in (TT_INT, TT_FLOAT):
+        if tok.type in (TT_INT, TT_FLOAT):
             res.register(self.advance())
             return res.success(NumberNode(tok))
 
@@ -244,25 +240,43 @@ class Parser:
                         "Expected ')'",
                     )
                 )
-
         return res.failure(
             InvalidSyntaxError(tok.pos_start, tok.pos_end, "Expected int or float")
         )
 
+    def term(self):
+        return self.bin_op(self.factor, (TT_MUL, TT_DIV))
+
+    def power(self):
+        return self.bin_op(self.atom, (TT_POW,), self.factor)
+
+    def factor(self):
+        res = ParseResult()
+        tok = self.current_tok
+        if tok.type in (TT_PLUS, TT_MINUS):
+            res.register(self.advance())
+            factor = res.register(self.factor())
+            if res.error:
+                return res
+            return res.success(UnaryOperationNode(tok, factor))
+        return self.power()
+
     def expression(self):
         return self.bin_op(self.term, (TT_PLUS, TT_MINUS))
 
-    def bin_op(self, func, ops):
+    def bin_op(self, func_left, ops, func_right=None):
         res = ParseResult()
+        if func_right == None:
+            func_right = func_left
 
-        left = res.register(func())
+        left = res.register(func_left())
         if res.error:
             return res
 
         while self.current_tok.type in ops:
             op_tok = self.current_tok
             res.register(self.advance())
-            right = res.register(func())
+            right = res.register(func_right())
             if res.error:
                 return res
             left = BinaryOperationNode(left, op_tok, right)
@@ -302,6 +316,12 @@ class Number:
             return Number(self.value * other.value).set_context(self.context), None
         elif isinstance(other, int) or isinstance(other, float):
             return Number(self.value * other).set_context(self.context), None
+
+    def powered_by(self, other):
+        if isinstance(other, Number):
+            return Number(self.value**other.value).set_context(self.context), None
+        elif isinstance(other, int) or isinstance(other, float):
+            return Number(self.value**other).set_context(self.context), None
 
     def divided_by(self, other):
         if isinstance(other, Number):
@@ -395,6 +415,8 @@ class Interpreter:
             result, error = left.multiplied_by(right)
         elif node.op_tok.type == TT_DIV:
             result, error = left.divided_by(right)
+        elif node.op_tok.type == TT_POW:
+            result, error = left.powered_by(right)
         if error:
             return res.failure(error)
         else:
