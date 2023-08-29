@@ -86,7 +86,7 @@ class Lexer:
                 self.advance()
                 return [], IllegalCharError(pos_start, self.pos, char)
 
-        tokens.append(Token(TT_EOF, self.pos))
+        tokens.append(Token(TT_EOF, pos_start=self.pos))
         return tokens, None
 
     def make_number(self):
@@ -136,6 +136,9 @@ class NumberNode:
     def __init__(self, tok):
         self.tok = tok
 
+        self.pos_start = self.tok.pos_start
+        self.pos_end = self.tok.pos_end
+
     def __repr__(self):
         return f"{self.tok}"
 
@@ -145,6 +148,8 @@ class BinaryOperationNode:
         self.left_node = left_node
         self.op_tok = op_tok
         self.right_node = right_node
+        self.pos_start = self.left_node.pos_start
+        self.pos_end = self.right_node.pos_end
 
     def __repr__(self):
         return f"({self.left_node}, {self.op_tok}, {self.right_node})"
@@ -154,6 +159,8 @@ class UnaryOperationNode:
     def __init__(self, op_tok, node):
         self.op_tok = op_tok
         self.node = node
+        self.pos_start = self.op_tok.pos_start
+        self.pos_end = self.node.pos_end
 
     def __repr__(self):
         return f"({self.op_tok}, {self.node})"
@@ -263,9 +270,47 @@ class Parser:
         return res.success(left)
 
 
+class Number:
+    def __init__(self, value):
+        self.set_pos()
+        self.value = value
+
+    def set_pos(self, pos_start=None, pos_end=None):
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+        return self
+
+    def added_to(self, other):
+        if isinstance(other, Number):
+            return Number(self.value + other.value)
+        elif isinstance(other, int) or isinstance(other, float):
+            return Number(self.value + other)
+
+    def subbed_by(self, other):
+        if isinstance(other, Number):
+            return Number(self.value - other.value)
+        elif isinstance(other, int) or isinstance(other, float):
+            return Number(self.value - other)
+
+    def multiplied_by(self, other):
+        if isinstance(other, Number):
+            return Number(self.value * other.value)
+        elif isinstance(other, int) or isinstance(other, float):
+            return Number(self.value * other)
+
+    def divided_by(self, other):
+        if isinstance(other, Number):
+            return Number(self.value / other.value)
+        elif isinstance(other, int) or isinstance(other, float):
+            return Number(self.value / other)
+
+    def __repr__(self):
+        return str(self.value)
+
+
 class Interpreter:
     def visit(self, node):
-        method_name = f"visit_{type(node).__name__})"
+        method_name = f"visit_{type(node).__name__}"
         method = getattr(self, method_name, self.no_visit_method)
         return method(node)
 
@@ -273,14 +318,30 @@ class Interpreter:
         raise Exception(f"No visit_{type(node).__name__} method defined")
 
     def visit_NumberNode(self, node):
-        pass
+        return Number(node.tok.value).set_pos(node.pos_start, node.pos_end)
 
-    def visit_UnaryOpNode(self, node):
-        self.visit(node.node)
+    def visit_UnaryOperationNode(self, node):
+        number = self.visit(node.node)
 
-    def visit_BinaryOpNode(self, node):
-        self.visit(node.left_node)
-        self.visit(node.right_node)
+        if node.op_tok.type == TT_MINUS:
+            number = number.multiplied_by(-1)
+
+        return number.set_pos(node.pos_start, node.pos_end)
+
+    def visit_BinaryOperationNode(self, node):
+        left = self.visit(node.left_node)
+        right = self.visit(node.right_node)
+
+        if node.op_tok.type == TT_PLUS:
+            result = left.added_to(right)
+        elif node.op_tok.type == TT_MINUS:
+            result = left.subbed_by(right)
+        elif node.op_tok.type == TT_MUL:
+            result = left.multiplied_by(right)
+        elif node.op_tok.type == TT_DIV:
+            result = left.divdied_by(right)
+
+        return result.set_pos(node.pos_start, node.pos_end)
 
 
 def run(file_name, text):
@@ -297,5 +358,5 @@ def run(file_name, text):
         return None, ast.error
 
     interpreter = Interpreter()
-    interpreter.visit(ast.node)
-    return ast.node, ast.error
+    result = interpreter.visit(ast.node)
+    return result, ast.error
