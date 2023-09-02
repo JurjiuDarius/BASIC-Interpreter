@@ -19,6 +19,8 @@ TT_LT = "LT"
 TT_GT = "GT"
 TT_LTE = "LTE"
 TT_GTE = "GTE"
+TT_COMMA = "COMMA"
+TT_ARROW = "ARROW"
 TT_IDENTIFIER = "IDENTIFIER"
 TT_KEYWORD = "KEYWORD"
 
@@ -96,7 +98,8 @@ class Lexer:
                 self.advance()
 
             elif self.current_char == "-":
-                tokens.append(Token(TT_MINUS, pos_start=self.pos))
+                self.make_minus_or_arrow()
+
                 self.advance()
 
             elif self.current_char == "*":
@@ -143,6 +146,10 @@ class Lexer:
                 tokens.append(Token(TT_EQ, pos_start=self.pos))
                 self.advance()
 
+            elif self.current_char == ",":
+                tokens.append(Token(TT_COMMA, pos_start=self.pos))
+                self.advance()
+
             else:
                 pos_start = self.pos.copy()
                 char = self.current_char
@@ -151,6 +158,17 @@ class Lexer:
 
         tokens.append(Token(TT_EOF, pos_start=self.pos))
         return tokens, None
+
+    def make_minus_or_arrow(self):
+        tok_type = TT_MINUS
+        pos_start = self.pos.copy()
+        self.advance()
+
+        if self.current_char == ">":
+            tok_type = TT_ARROW
+            self.advance()
+
+        return Token(tok_type, pos_start=pos_start, pos_end=self.pos)
 
     def make_not_equals(self):
         pos_start = self.pos.copy()
@@ -314,7 +332,7 @@ class ForNode:
         self, var_name_tok, start_var_node, end_val_node, step_val_node, body_node
     ):
         self.var_name_tok = var_name_tok
-        self.start_var_node = start_var_node
+        self.start_val_node = start_var_node
         self.end_val_node = end_val_node
         self.step_val_node = step_val_node
         self.body_node = body_node
@@ -329,6 +347,22 @@ class WhileNode:
         self.body_node = body_node
 
         self.pos_start = self.condition_node.pos_start
+        self.pos_end = self.body_node.pos_end
+
+
+class FunctionDefinitionNode:
+    def __init__(self, var_name_tok, arg_name_toks, body_node):
+        self.var_name_tok = var_name_tok
+        self.arg_name_toks = arg_name_toks
+        self.body_node = body_node
+
+        if self.var_name_tok:
+            self.pos_start = self.var_name_tok.pos_start
+        elif len(self.arg_name_toks) > 0:
+            self.pos_start = self.arg_name_toks[0].pos_start
+        else:
+            self.pos_start = self.body_node.pos_start
+
         self.pos_end = self.body_node.pos_end
 
 
@@ -449,6 +483,19 @@ class Parser:
             if res.error:
                 return res
             return res.success(if_expr)
+
+        elif tok.matches(TT_KEYWORD, "FOR"):
+            for_expr = res.register(self.for_expr())
+            if res.error:
+                return res
+            return res.success(for_expr)
+
+        elif tok.matches(TT_KEYWORD, "WHILE"):
+            while_expr = res.register(self.while_expr())
+            if res.error:
+                return res
+            return res.success(while_expr)
+
         return res.failure(
             InvalidSyntaxError(tok.pos_start, tok.pos_end, "Expected int or float")
         )
@@ -523,6 +570,126 @@ class Parser:
                 return res.error()
 
         return res.success(IfNode(cases, else_case))
+
+    def for_expr(self):
+        res = ParseResult()
+
+        if not self.current_tok.matches(TT_KEYWORD, "FOR"):
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    "Expected 'FOR'",
+                )
+            )
+        res.register_advancement()
+        self.advance()
+
+        if self.current_tok.type != TT_IDENTIFIER:
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    "Expected identifier",
+                )
+            )
+
+        var_name = self.current_tok
+        res.register_advancement()
+        self.advance()
+
+        if self.current_tok.type != TT_EQ:
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end, "Expected '='"
+                )
+            )
+
+        res.register_advancement()
+        self.advance()
+
+        start_value = res.register(self.expression())
+        if res.error:
+            return res
+
+        if not self.current_tok.matches(TT_KEYWORD, "TO"):
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    "Expected 'TO'",
+                )
+            )
+
+        res.register_advancement()
+        self.advance()
+
+        end_value = res.register(self.expression())
+        if res.error:
+            return res
+
+        if self.current_tok.matches(TT_KEYWORD, "STEP"):
+            res.register_advancement()
+            self.advance()
+
+            step_value = res.register(self.expression())
+            if res.error:
+                return res
+        else:
+            step_value = None
+
+        if not self.current_tok.matches(TT_KEYWORD, "THEN"):
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    "Expected 'THEN'",
+                )
+            )
+
+        res.register_advancement()
+        self.advance()
+
+        body = res.register(self.expression())
+
+        if res.error:
+            return res
+
+        return res.success(ForNode(var_name, start_value, end_value, step_value, body))
+
+    def while_expr(self):
+        res = ParseResult()
+
+        if not self.current_tok.matches(TT_KEYWORD, "WHILE"):
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    "Expected 'WHILE'",
+                )
+            )
+
+        res.register_advancement()
+        self.advance()
+        condition = res.register(self.expression())
+        if res.error:
+            return res
+
+        if not self.current_tok.matches(TT_KEYWORD, "THEN"):
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    "Expected 'THEN'",
+                )
+            )
+        res.register_advancement()
+        self.advance()
+        body = res.register(self.expression())
+        if res.error:
+            return res
+
+        return res.success(WhileNode(condition, body))
 
     def term(self):
         return self.bin_op(self.factor, (TT_MUL, TT_DIV))
@@ -897,6 +1064,54 @@ class Interpreter:
                 if res.error:
                     return res
                 return res.success(else_value)
+        return res.success(None)
+
+    def visit_ForNode(self, node, context):
+        res = RuntimeResult()
+
+        start_value = res.register(self.visit(node.start_val_node, context))
+        if res.error:
+            return res
+
+        end_value = res.register(self.visit(node.end_val_node, context))
+        if res.error:
+            return res
+
+        if node.step_val_node:
+            step_value = res.register(self.visit(node.step_val_node, context))
+            if res.error:
+                return res
+        else:
+            step_value = Number(1)
+
+        i = start_value.value
+
+        if step_value.value >= 0:
+            condition = lambda: i < end_value.value
+        else:
+            condition = lambda: i > end_value.value
+
+        while condition():
+            context.symbol_table.set(node.var_name_tok.value, Number(i))
+            i += step_value.value
+            res.register(self.visit(node.body_node, context))
+            if res.error:
+                return res
+        return res.success(None)
+
+    def visit_WhileNode(self, node, context):
+        res = RuntimeResult()
+
+        while True:
+            condition = res.register(self.visit(node.condition_node, context))
+            if res.error:
+                return res
+            if not condition.is_true():
+                break
+            res.register(self.visit(node.body_node, context))
+            if res.error:
+                return res
+
         return res.success(None)
 
 
