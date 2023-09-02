@@ -7,7 +7,7 @@ class Error:
 
     def as_string(self):
         result = f"{self.error_name}: {self.details}"
-        result += f"File {self.pos_start.file_name}, line {self.pos_start.ln+1}"
+        result += f"\nFile {self.pos_start.file_name}, line {self.pos_start.ln+1}"
         return result
 
 
@@ -18,7 +18,7 @@ class IllegalCharError(Error):
 
 class InvalidSyntaxError(Error):
     def __init__(self, pos_start, pos_end, details):
-        super().__init__(pos_start, pos_end, "Invalid parsing error: ", details)
+        super().__init__(pos_start, pos_end, "Invalid parsing error", details)
 
 
 class RuntimeError(Error):
