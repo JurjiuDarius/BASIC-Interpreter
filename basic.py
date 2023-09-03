@@ -11,6 +11,7 @@ TT_DIV = "DIV"
 TT_POW = "POW"
 TT_LPAREN = "LPAREN"
 TT_RPAREN = "RPAREN"
+TT_STR = "STR"
 TT_EOF = "EOF"
 TT_EQ = "EQ"
 TT_EE = "EE"
@@ -23,6 +24,8 @@ TT_COMMA = "COMMA"
 TT_ARROW = "ARROW"
 TT_IDENTIFIER = "IDENTIFIER"
 TT_KEYWORD = "KEYWORD"
+
+escape_characters = {"n": "\n", "t": "t"}
 
 KEYWORDS = [
     "VAR",
@@ -96,6 +99,9 @@ class Lexer:
             elif self.current_char in LETTERS:
                 tokens.append(self.make_identifier())
 
+            elif self.current_char == '"':
+                tokens.append(self.make_str())
+
             elif self.current_char == "+":
                 tokens.append(Token(TT_PLUS, pos_start=self.pos))
                 self.advance()
@@ -159,6 +165,29 @@ class Lexer:
 
         tokens.append(Token(TT_EOF, pos_start=self.pos))
         return tokens, None
+
+    def make_str(self):
+        string = ""
+        pos_start = self.pos.copy()
+        escape_character = False
+        self.advance()
+
+        while self.current_char != None and (
+            self.current_char != '"' or escape_character
+        ):
+            if escape_character:
+                string += self.current_char
+            else:
+                if self.current_char == "\\":
+                    escape_character = True
+                else:
+                    string += self.current_char
+            escape_character = False
+            self.advance()
+
+        self.advance()
+
+        return Token(TT_STR, string, pos_start, self.pos)
 
     def make_minus_or_arrow(self):
         tok_type = TT_MINUS
@@ -266,6 +295,17 @@ class Position:
 
 
 class NumberNode:
+    def __init__(self, tok):
+        self.tok = tok
+
+        self.pos_start = self.tok.pos_start
+        self.pos_end = self.tok.pos_end
+
+    def __repr__(self):
+        return f"{self.tok}"
+
+
+class StringNode:
     def __init__(self, tok):
         self.tok = tok
 
@@ -506,6 +546,10 @@ class Parser:
             self.register_advance(res)
             return res.success(VarAccessNode(tok))
 
+        elif tok.type == TT_STR:
+            self.register_advance(res)
+            return res.success(StringNode(tok))
+
         elif tok.type == TT_LPAREN:
             self.register_advance(res)
             expression = res.register(self.expression())
@@ -519,7 +563,7 @@ class Parser:
                     InvalidSyntaxError(
                         self.current_tok.pos_start,
                         self.current_tok.pos_end,
-                        "int, float, identifier +, - or )",
+                        "int, float, identifier , '+', '-' or ')'",
                     )
                 )
 
@@ -895,6 +939,67 @@ class Value:
         self.context = context
         return self
 
+    def illegal_operation(self, other=None):
+        if not other:
+            other = self
+        return RuntimeError(
+            self.pos_start,
+            other.pos_end if other else self.pos_end,
+            "Illegal operation",
+            self.context,
+        )
+
+    def added_to(self, other):
+        return None, self.illegal_operation(other)
+
+    def subbed_by(self, other):
+        return None, self.illegal_operation(other)
+
+    def multiplied_by(self, other):
+        return None, self.illegal_operation(other)
+
+    def divided_by(self, other):
+        return None, self.illegal_operation(other)
+
+    def powered_by(self, other):
+        return None, self.illegal_operation(other)
+
+    def get_comparison_eq(self, other):
+        return None, self.illegal_operation(other)
+
+    def get_comparison_ne(self, other):
+        return None, self.illegal_operation(other)
+
+    def get_comparison_lt(self, other):
+        return None, self.illegal_operation(other)
+
+    def get_comparison_gt(self, other):
+        return None, self.illegal_operation(other)
+
+    def get_comparison_lte(self, other):
+        return None, self.illegal_operation(other)
+
+    def get_comparison_gte(self, other):
+        return None, self.illegal_operation(other)
+
+    def anded_by(self, other):
+        return None, self.illegal_operation(other)
+
+    def ored_by(self, other):
+        return None, self.illegal_operation(other)
+
+    def notted(self):
+        return None, self.illegal_operation()
+
+    def execute(self, args):
+        return RuntimeResult().failure(self.illegal_operation())
+
+    def copy(self):
+        raise Exception("No copy method defined")
+
+    def is_true(self):
+        return False
+
 
 class Number(Value):
     def __init__(self, value):
@@ -906,24 +1011,34 @@ class Number(Value):
             return Number(self.value + other.value).set_context(self.context), None
         elif isinstance(other, int) or isinstance(other, float):
             return Number(self.value + other).set_context(self.context), None
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def subbed_by(self, other):
         if isinstance(other, Number):
             return Number(self.value - other.value).set_context(self.context), None
         elif isinstance(other, int) or isinstance(other, float):
             return Number(self.value - other).set_context(self.context), None
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def multiplied_by(self, other):
         if isinstance(other, Number):
             return Number(self.value * other.value).set_context(self.context), None
         elif isinstance(other, int) or isinstance(other, float):
             return Number(self.value * other).set_context(self.context), None
+        elif isinstance(other, String):
+            return String(other.value * self.value).set_context(self.context), None
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def powered_by(self, other):
         if isinstance(other, Number):
             return Number(self.value**other.value).set_context(self.context), None
         elif isinstance(other, int) or isinstance(other, float):
             return Number(self.value**other).set_context(self.context), None
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def divided_by(self, other):
         if isinstance(other, Number):
@@ -938,6 +1053,8 @@ class Number(Value):
                     other.pos_start, other.pos_end, "Divison by 0", self.context
                 )
             return (Number(self.value / other).set_context(self.context), None)
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def get_comparison_eq(self, other):
         if isinstance(other, Number):
@@ -945,6 +1062,8 @@ class Number(Value):
                 Number(int(self.value == other.value)).set_context(self.context),
                 None,
             )
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def ok(self, other):
         if isinstance(other, Number):
@@ -952,10 +1071,14 @@ class Number(Value):
                 Number(int(self.value != other.value)).set_context(self.context),
                 None,
             )
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def get_comparison_gt(self, other):
         if isinstance(other, Number):
             return Number(int(self.value > other.value)).set_context(self.context), None
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def get_comparison_lte(self, other):
         if isinstance(other, Number):
@@ -963,6 +1086,8 @@ class Number(Value):
                 Number(int(self.value <= other.value)).set_context(self.context),
                 None,
             )
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def get_comparison_gte(self, other):
         if isinstance(other, Number):
@@ -970,6 +1095,8 @@ class Number(Value):
                 Number(int(self.value >= other.value)).set_context(self.context),
                 None,
             )
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def anded_by(self, other):
         if isinstance(other, Number):
@@ -977,6 +1104,8 @@ class Number(Value):
                 Number(int(self.value and other.value)).set_context(self.context),
                 None,
             )
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def ored_by(self, other):
         if isinstance(other, Number):
@@ -984,6 +1113,8 @@ class Number(Value):
                 Number(int(self.value or other.value)).set_context(self.context),
                 None,
             )
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def notted(self):
         return Number(1 if self.value == 0 else 0).set_context(self.context), None
@@ -991,9 +1122,45 @@ class Number(Value):
     def get_comparison_lt(self, other):
         if isinstance(other, Number):
             return Number(int(self.value < other.value)).set_context(self.context), None
+        else:
+            return None, Value.illegal_operation(self, other)
 
     def is_true(self):
         return self.value != 0
+
+    def copy(self):
+        copy = Number(self.value)
+        copy.set_pos(self.pos_start, self.pos_end)
+        copy.set_context(self.context)
+        return copy
+
+    def __repr__(self):
+        return str(self.value)
+
+
+class String(Value):
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+    def added_to(self, other):
+        if isinstance(other, String):
+            return String(self.value + other.value).set_context(self.context), None
+        elif isinstance(other, str):
+            return String(self.value + other).set_context(self.context), None
+        else:
+            return None, Value.illegal_operation(self, other)
+
+    def multiplied_by(self, other):
+        if isinstance(other, Number):
+            return String(self.value * other.value).set_context(self.context), None
+        elif isinstance(other, int):
+            return String(self.value * other).set_context(self.context), None
+        else:
+            return None, Value.illegal_operation(self, other)
+
+    def is_true(self):
+        return len(self.value) > 0
 
     def copy(self):
         copy = Number(self.value)
@@ -1229,6 +1396,13 @@ class Interpreter:
                     return res
                 return res.success(else_value)
         return res.success(None)
+
+    def visit_StringNode(self, node, context):
+        return RuntimeResult().success(
+            String(node.tok.value)
+            .set_context(context)
+            .set_pos(node.pos_start, node.pos_end)
+        )
 
     def visit_ForNode(self, node, context):
         res = RuntimeResult()
