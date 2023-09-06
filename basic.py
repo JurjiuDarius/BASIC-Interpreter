@@ -26,6 +26,7 @@ TT_GTE = "GTE"
 TT_COMMA = "COMMA"
 TT_ARROW = "ARROW"
 TT_IDENTIFIER = "IDENTIFIER"
+TT_NEWLINE = "NEWLINE"
 TT_KEYWORD = "KEYWORD"
 
 escape_characters = {"n": "\n", "t": "t"}
@@ -44,6 +45,7 @@ KEYWORDS = [
     "STEP",
     "WHILE",
     "FUN",
+    "END",
 ]
 
 
@@ -104,6 +106,10 @@ class Lexer:
 
             elif self.current_char == '"':
                 tokens.append(self.make_str())
+
+            elif self.current_char in ";\n":
+                tokens.append(Token(TT_NEWLINE, pos_start=self.pos))
+                self.advance()
 
             elif self.current_char == "+":
                 tokens.append(Token(TT_PLUS, pos_start=self.pos))
@@ -443,11 +449,15 @@ class ParseResult:
         self.error = None
         self.node = None
         self.advance_count = 0
+        self.last_registered_advance_count = 0
+        self.to_reverse_count = 0
 
     def register_advancement(self):
+        self.last_registered_advance_count = 1
         self.advance_count += 1
 
     def register(self, res):
+        self.last_registered_advance_count = res.advance_count
         self.advance_count += res.advance_count
         if res.error:
             self.error = res.error
@@ -462,6 +472,12 @@ class ParseResult:
             self.error = error
         return self
 
+    def try_register(self, res):
+        if res.error:
+            self.to_reverse_count = res.advance_count
+            return None
+        return self.register(res)
+
 
 class Parser:
     def __init__(self, tokens):
@@ -470,7 +486,7 @@ class Parser:
         self.advance()
 
     def parse(self):
-        res = self.expression()
+        res = self.statements()
         if not res.error and self.current_tok.type != TT_EOF:
             return res.failure(
                 InvalidSyntaxError(
@@ -481,12 +497,54 @@ class Parser:
             )
         return res
 
+    def statements(self):
+        res = ParseResult()
+        statements = []
+        pos_start = self.current_tok.pos_start.copy()
+
+        while self.current_tok.type == TT_NEWLINE:
+            self.register_advance(res)
+
+        statement = res.register(self.expression())
+        if res.error:
+            return res
+        statements.append(statement)
+        has_more_statements = True
+        while True:
+            newline_count = 0
+            while self.current_tok.type == TT_NEWLINE:
+                self.register_advance(res)
+                newline_count += 1
+                if newline_count == 0:
+                    has_more_statements = False
+
+            if not has_more_statements:
+                break
+
+            statement = res.try_register(self.expression())
+            if not statement:
+                self.reverse(res.to_reverse_count)
+                has_more_statements = False
+                continue
+            statements.append(statement)
+
+        return res.success(
+            ListNode(statements, pos_start, self.current_tok.pos_end.copy())
+        )
+
     def advance(self):
         self.tok_idx += 1
-        if self.tok_idx < len(self.tokens):
-            self.current_tok = self.tokens[self.tok_idx]
-
+        self.update_current_tok()
         return self.current_tok
+
+    def reverse(self, amount=1):
+        self.tok_idx -= amount
+        self.update_current_tok()
+        return self.current_tok
+
+    def update_current_tok(self):
+        if self.tok_idx >= 0 and self.tok_idx < len(self.tokens):
+            self.current_tok = self.tokens[self.tok_idx]
 
     def comparison_expression(self):
         res = ParseResult()
@@ -771,12 +829,14 @@ class Parser:
 
     def if_expr(self):
         res = ParseResult()
+        all_cases = res.register(self.parse_if_cases("IF"))
+        if res.error:
+            return res
+        cases, else_cases = all_cases
+        return res.scucces(IfNode(cases, else_cases))
+        res = ParseResult()
         cases = []
         else_case = None
-
-        failure = self.match_value_advance(res, TT_KEYWORD, "IF")
-        if failure:
-            return failure
 
         condition = res.register(self.expression())
         if res.error:
@@ -814,6 +874,89 @@ class Parser:
                 return res.error()
 
         return res.success(IfNode(cases, else_case))
+
+    def if_expr_b(self):
+        return self.parse_if_cases("ELIF")
+
+    def if_expr_c(self):
+        res = ParseResult()
+        cases = []
+
+        self.register_advance(res)
+
+        if self.current_tok.type == TT_NEWLINE:
+            self.register_advance(res)
+            statements = res.register(self.statements())
+
+            if res.error:
+                return res
+            else_case = (statements, True)
+
+            if self.current_tok.matches(TT_KEYWORD, "END"):
+                self.register_advance(res)
+
+            else:
+                return res.failure(
+                    InvalidSyntaxError(
+                        self.current_tok.pos_start,
+                        self.current_tok.pos_ned,
+                        "Expected 'END",
+                    )
+                )
+
+        else:
+            expr = res.register(self.expression())
+            if res.error:
+                return res
+            else_case = (expr, False)
+
+    def parse_if_cases(self, case_keyword):
+        res = ParseResult()
+        cases = []
+        else_case = None
+
+        failure = self.match_value_advance(res, TT_KEYWORD, case_keyword)
+        if failure:
+            return failure
+
+        condition = res.register(self.expression())
+        if res.error:
+            return res
+
+        failure = self.match_value_advance(res, TT_KEYWORD, "THEN")
+        if failure:
+            return failure
+
+        if self.current_tok.type == TT_NEWLINE:
+            self.register_advance(res)
+
+            statements = res.register(self.statements())
+            if res.error:
+                return res
+
+            cases.append((condition, statements, True))
+
+            if self.current_tok.matches(TT_KEYWORD, "END"):
+                self.register_advance(res)
+            else:
+                all_cases = res.register(self.if_expr_b_or_c())
+                if res.error:
+                    return res
+                new_cases, else_case = all_cases
+                cases.extend(new_cases)
+
+        else:
+            expr = res.register(self.expression())
+            if res.error:
+                return res
+            cases.append((condition, expr, False))
+            all_cases = res.register(self.if_expr_b_or_c())
+            if res.error:
+                return res
+            new_cases, else_case = all_cases
+            cases.extend(new_cases)
+
+        return res.success(cases, else_case)
 
     def for_expr(self):
         res = ParseResult()
@@ -1235,7 +1378,7 @@ class String(Value):
         return len(self.value) > 0
 
     def copy(self):
-        copy = Number(self.value)
+        copy = String(self.value)
         copy.set_pos(self.pos_start, self.pos_end)
         copy.set_context(self.context)
         return copy
@@ -1291,7 +1434,7 @@ class List(Value):
             return None, Value.illegal_operation(self, other)
 
     def copy(self):
-        copy = List(self.elements[:])
+        copy = List(self.elements)
         copy.set_pos(self.pos_start, self.pos_end)
         copy.set_context(self.context)
         return copy
@@ -1467,12 +1610,18 @@ class BuiltInFunction(BaseFunction):
 
     execute_is_list.arg_names = ["value"]
 
+    def execute_is_function(self, context):
+        is_number = isinstance(context.symbol_table.get("value"), BaseFunction)
+        return RuntimeResult().success(Number.true if is_number else Number.false)
+
+    execute_is_function.arg_names = ["value"]
+
     def execute_append(self, context):
         list_ = context.symbol_table.get("list")
         value = context.symbol_table.get("value")
 
         if not isinstance(list_, List):
-            return RuntimeResult.failure(
+            return RuntimeResult().failure(
                 RuntimeError(
                     self.pos_start,
                     self.pos_end,
@@ -1488,10 +1637,10 @@ class BuiltInFunction(BaseFunction):
 
     def execute_pop(self, context):
         list_ = context.symbol_table.get("list")
-        index = context.symbol_table.get("value")
+        index = context.symbol_table.get("index")
 
         if not isinstance(list_, List):
-            return RuntimeResult.failure(
+            return RuntimeResult().failure(
                 RuntimeError(
                     self.pos_start,
                     self.pos_end,
@@ -1499,8 +1648,8 @@ class BuiltInFunction(BaseFunction):
                     context,
                 )
             )
-        if not isinstance(index, List):
-            return RuntimeResult.failure(
+        if not isinstance(index, Number):
+            return RuntimeResult().failure(
                 RuntimeError(
                     self.pos_start,
                     self.pos_end,
@@ -1512,7 +1661,7 @@ class BuiltInFunction(BaseFunction):
         try:
             element = list_.elements.pop(index.value)
         except:
-            return RuntimeResult.failure(
+            return RuntimeResult().failure(
                 RuntimeError(
                     self.pos_start,
                     self.pos_end,
@@ -1529,7 +1678,7 @@ class BuiltInFunction(BaseFunction):
         listB = context.symbol_table.get("listB")
 
         if not isinstance(listA, List):
-            return RuntimeResult.failure(
+            return RuntimeResult().failure(
                 RuntimeError(
                     self.pos_start,
                     self.pos_end,
@@ -1538,7 +1687,7 @@ class BuiltInFunction(BaseFunction):
                 )
             )
         if not isinstance(listB, List):
-            return RuntimeResult.failure(
+            return RuntimeResult().failure(
                 RuntimeError(
                     self.pos_start,
                     self.pos_end,
@@ -1706,8 +1855,7 @@ class Interpreter:
                 )
             )
 
-        value = value.copy().set_pos(node.pos_start, node.pos_end)
-
+        value = value.copy().set_pos(node.pos_start, node.pos_end).set_context(context)
         return res.success(value)
 
     def visit_VarAssignNode(self, node, context):
@@ -1842,6 +1990,11 @@ class Interpreter:
         return_value = res.register(value_to_call.execute(args))
         if res.error:
             return res
+        return_value = (
+            return_value.copy()
+            .set_pos(node.pos_start, node.pos_end)
+            .set_context(context)
+        )
         return res.success(return_value)
 
 
