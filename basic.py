@@ -857,47 +857,7 @@ class Parser:
         if res.error:
             return res
         cases, else_cases = all_cases
-        return res.scucces(IfNode(cases, else_cases))
-        res = ParseResult()
-        cases = []
-        else_case = None
-
-        condition = res.register(self.expression())
-        if res.error:
-            return res
-
-        failure = self.match_value_advance(res, TT_KEYWORD, "THEN")
-        if failure:
-            return failure
-
-        expr = res.register(self.expression())
-        if res.error:
-            return res
-        cases.append((condition, expr))
-
-        while self.current_tok.matches(TT_KEYWORD, "ELIF"):
-            self.register_advance(res)
-
-            condition = res.register(self.expression())
-            if res.error:
-                return res
-
-            failure = self.match_value_advance(res, TT_KEYWORD, "IF")
-            if failure:
-                return failure
-
-            expr = res.register(self.expr())
-            if res.error:
-                return res
-            cases.append((condition, expr))
-
-        if self.current_tok.matches(TT_KEYWORD, "ELSE"):
-            self.register_advance(res)
-            else_case = res.register(self.expression())
-            if res.error:
-                return res.error()
-
-        return res.success(IfNode(cases, else_case))
+        return res.success(IfNode(cases, else_cases))
 
     def if_expr_b(self):
         return self.parse_if_cases("ELIF")
@@ -999,7 +959,7 @@ class Parser:
             new_cases, else_case = all_cases
             cases.extend(new_cases)
 
-        return res.success(cases, else_case)
+        return res.success((cases, else_case))
 
     def for_expr(self):
         res = ParseResult()
@@ -1560,10 +1520,11 @@ class BaseFunction(Value):
 
 
 class Function(BaseFunction):
-    def __init__(self, name, body_node, arg_names):
+    def __init__(self, name, body_node, arg_names, should_return_null):
         super().__init__(name)
         self.body_node = body_node
         self.arg_names = arg_names
+        self.should_return_null = should_return_null
 
     def execute(self, args):
         res = RuntimeResult()
@@ -1578,10 +1539,12 @@ class Function(BaseFunction):
         value = res.register(interpreter.visit(self.body_node, context))
         if res.error:
             return res
-        return res.success(value)
+        return res.success(Number.null if self.should_return_null else value)
 
     def copy(self):
-        copy = Function(self.name, self.body_node, self.arg_names)
+        copy = Function(
+            self.name, self.body_node, self.arg_names, self.should_return_null
+        )
         copy.set_context(self.context)
         copy.set_pos(self.pos_start, self.pos_end)
         return copy
@@ -1947,11 +1910,12 @@ class Interpreter:
                     return res
                 return res.success(Number.null if should_return_null else expr_value)
             if node.else_case:
-                else_value = res.register(self.visit(node.else_case, context))
+                expr, should_return_null = node.else_case
+                else_value = res.register(self.visit(expr, context))
                 if res.error:
                     return res
                 return res.success(Number.null if should_return_null else else_value)
-        return res.success(None)
+        return res.success(Number.null)
 
     def visit_StringNode(self, node, context):
         return RuntimeResult().success(
@@ -2005,7 +1969,11 @@ class Interpreter:
             if res.error:
                 return res
         return res.success(
-            List(elements).set_context(context).set_pos(node.pos_start, node.pos_end)
+            Number.null
+            if node.should_return_null
+            else List(elements)
+            .set_context(context)
+            .set_pos(node.pos_start, node.pos_end)
         )
 
     def visit_WhileNode(self, node, context):
@@ -2023,7 +1991,11 @@ class Interpreter:
                 return res
 
         return res.success(
-            List(elements).set_context(context).set_pos(node.pos_start, node.pos_end)
+            Number.null
+            if node.should_return_null
+            else List(elements)
+            .set_context(context)
+            .set_pos(node.pos_start, node.pos_end)
         )
 
     def visit_FunctionDefinitionNode(self, node, context):
@@ -2032,7 +2004,7 @@ class Interpreter:
         body_node = node.body_node
         arg_names = [arg_name.value for arg_name in node.arg_name_toks]
         func = (
-            Function(func_name, body_node, arg_names)
+            Function(func_name, body_node, arg_names, node.should_return_null)
             .set_context(context)
             .set_pos(node.pos_start, node.pos_end)
         )
