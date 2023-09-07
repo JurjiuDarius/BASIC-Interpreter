@@ -46,6 +46,9 @@ KEYWORDS = [
     "WHILE",
     "FUN",
     "END",
+    "RETURN",
+    "CONTINUE",
+    "BREAK",
 ]
 
 
@@ -454,6 +457,25 @@ class CallNode:
             self.pos_end = self.node_to_call.pos_end
 
 
+class ReturnNode:
+    def __init__(self, node_to_return, pos_start, pos_end):
+        self.node_to_return = node_to_return
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+
+
+class ContinueNode:
+    def __init__(self, pos_start, pos_end):
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+
+
+class BreakNode:
+    def __init__(self, pos_start, pos_end):
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+
+
 class ParseResult:
     def __init__(self):
         self.error = None
@@ -515,7 +537,7 @@ class Parser:
         while self.current_tok.type == TT_NEWLINE:
             self.register_advance(res)
 
-        statement = res.register(self.expression())
+        statement = res.register(self.statement())
         if res.error:
             return res
         statements.append(statement)
@@ -531,7 +553,7 @@ class Parser:
             if not has_more_statements:
                 break
 
-            statement = res.try_register(self.expression())
+            statement = res.try_register(self.statement())
             if not statement:
                 self.reverse(res.to_reverse_count)
                 has_more_statements = False
@@ -541,6 +563,41 @@ class Parser:
         return res.success(
             ListNode(statements, pos_start, self.current_tok.pos_end.copy())
         )
+
+    def statement(self):
+        res = ParseResult()
+        pos_start = self.current_tok.pos_start.copy()
+
+        if self.current_tok.matches(TT_KEYWORD, "RETURN"):
+            self.register_advance(res)
+            expr = res.try_register(self.expression())
+
+            if not expr:
+                self.reverse(res.to_reverse_count)
+
+            return res.success(
+                ReturnNode(expr, pos_start, self.current_tok.pos_end.copy())
+            )
+
+        if self.current_tok.matches(TT_KEYWORD, "CONTINUE"):
+            self.register_advance(res)
+
+            return res.success(ContinueNode(pos_start, self.current_tok.pos_end.copy()))
+
+        if self.current_tok.matches(TT_KEYWORD, "BREAK"):
+            self.register_advance(res)
+
+            return res.success(BreakNode(pos_start, self.current_tok.pos_end.copy()))
+
+        expr = res.register(self.expression())
+        if res.error:
+            return res.failure(
+                InvalidSyntaxError(
+                    self.current_tok.pos_start,
+                    self.current_tok.pos_end,
+                    "int, float, identifier +, - or ), ], VAR, IF, FOR, WHILE, FUN, RETURN, CONTINUE, BREAK OR NOT",
+                )
+            )
 
     def advance(self):
         self.tok_idx += 1
@@ -864,7 +921,7 @@ class Parser:
 
     def if_expr_c(self):
         res = ParseResult()
-        cases = []
+        else_case = None
 
         self.register_advance(res)
 
@@ -889,7 +946,7 @@ class Parser:
                 )
 
         else:
-            expr = res.register(self.expression())
+            expr = res.register(self.statement())
             if res.error:
                 return res
             else_case = (expr, False)
@@ -949,7 +1006,7 @@ class Parser:
                 cases.extend(new_cases)
 
         else:
-            expr = res.register(self.expression())
+            expr = res.register(self.statement())
             if res.error:
                 return res
             cases.append((condition, expr, False))
@@ -989,7 +1046,7 @@ class Parser:
 
         self.register_advance(res)
 
-        start_value = res.register(self.expression())
+        start_value = res.register(self.statement())
         if res.error:
             return res
 
@@ -1071,7 +1128,7 @@ class Parser:
             return res.success(WhileNode(condition, body, True))
 
         self.register_advance(res)
-        body = res.register(self.expression())
+        body = res.register(self.statement())
         if res.error:
             return res
 
@@ -1134,7 +1191,7 @@ class Parser:
                 InvalidSyntaxError(
                     self.current_tok.pos_start,
                     self.current_tok.pos_end,
-                    "int, float, identifier +, - or ), ]",
+                    "Expected int, float, identifier, '[' '+', '-','(' 'NOT'",
                 )
             )
         return res.success(node)
@@ -1748,19 +1805,44 @@ BuiltInFunction.extend = BuiltInFunction("extend")
 
 class RuntimeResult:
     def __init__(self):
+        self.reset()
+
+    def reset(self):
         self.value = None
         self.error = None
+        self.func_return_value = None
+        self.loop_should_continue = False
+        self.loop_should_break = False
 
     def register(self, res):
-        if res.error:
-            self.error = res.error
+        self.error = res.error
+        self.func_return_value = res.func_return_value
+        self.loop_should_continue = res.loop_should_continue
+        self.loop_should_break = res.loop_should_break
         return res.value
 
     def success(self, value):
+        self.reset()
         self.value = value
         return self
 
+    def success_return(self, value):
+        self.reset()
+        self.func_return_value = value
+        return self
+
+    def success_continue(self):
+        self.reset()
+        self.loop_should_continue = True
+        return self
+
+    def success_break(self):
+        self.reset()
+        self.loop_should_break = True
+        return self
+
     def failure(self, error):
+        self.reset()
         self.error = error
         return self
 
