@@ -101,6 +101,9 @@ class Lexer:
             if self.current_char in " \t":
                 self.advance()
 
+            if self.current_char == "#":
+                self.skip_line()
+
             elif self.current_char in DIGITS:
                 tokens.append(self.make_number())
 
@@ -185,6 +188,12 @@ class Lexer:
 
         tokens.append(Token(TT_EOF, pos_start=self.pos))
         return tokens, None
+
+    def skip_line(self):
+        while self.current_char != "\n":
+            self.advance()
+
+        self.advance
 
     def make_str(self):
         string = ""
@@ -1795,6 +1804,63 @@ class BuiltInFunction(BaseFunction):
 
     execute_extend.arg_names = ["listA", "listB"]
 
+    def execute_len(self, context):
+        list_ = context.symbol_table.get("list")
+        if not isinstance(list_, list):
+            return RuntimeResult().failure(
+                RuntimeError(
+                    self.pos_start,
+                    self.pos_end,
+                    "Second argument must be a list",
+                    context,
+                )
+            )
+        return RuntimeResult().success(Number(len(list_.elements)))
+
+    execute_len.arg_names = ["list"]
+
+    def execute_run(self, context):
+        fn = context.symbol_table.get("fn")
+
+        if not isinstance(fn, String):
+            return RuntimeResult().failure(
+                RuntimeError(
+                    self.pos_start, self.pos_end, "Argument must be string", context
+                )
+            )
+
+        fn = fn.value
+
+        try:
+            with open(fn, "r") as f:
+                script = f.read()
+
+        except Exception as e:
+            return RuntimeResult().failure(
+                RuntimeError(
+                    self.pos_start,
+                    self.pos_end,
+                    f"Failed to load script from file '{fn}'",
+                    context,
+                )
+            )
+
+        _, error = run(fn, script)
+
+        if error:
+            return RuntimeResult().failure(
+                RuntimeError(
+                    self.pos_start,
+                    self.pos_end,
+                    f"Could not finish executing script '{fn}'",
+                    error.as_string(),
+                    context,
+                )
+            )
+        return RuntimeResult.success(Number.null)
+
+    execute_run.arg_names = ["fn"]
+
 
 BuiltInFunction.print = BuiltInFunction("print")
 BuiltInFunction.print_ret = BuiltInFunction("print_ret")
@@ -1808,6 +1874,8 @@ BuiltInFunction.is_function = BuiltInFunction("is_function")
 BuiltInFunction.append = BuiltInFunction("append")
 BuiltInFunction.pop = BuiltInFunction("pop")
 BuiltInFunction.extend = BuiltInFunction("extend")
+BuiltInFunction.len = BuiltInFunction("len")
+BuiltInFunction.run = BuiltInFunction("run")
 
 
 class RuntimeResult:
@@ -2190,6 +2258,8 @@ global_symbol_table.set("IS_FUN", BuiltInFunction.is_function)
 global_symbol_table.set("APPEND", BuiltInFunction.append)
 global_symbol_table.set("POP", BuiltInFunction.pop)
 global_symbol_table.set("EXTEND", BuiltInFunction.extend)
+global_symbol_table.set("LEN", BuiltInFunction.len)
+global_symbol_table.set("RUN", BuiltInFunction.run)
 
 
 def run(file_name, text):
