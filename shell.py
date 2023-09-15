@@ -1,10 +1,10 @@
-import basic
+from runtime.runner import run
 
 while True:
     text = input("basic > ")
     if text.strip() == "":
         continue
-    result, error = basic.run("stdin", text)
+    result, error = run("stdin", text)
     if error:
         print(error.as_string())
     elif result:
