@@ -101,8 +101,12 @@ class Lexer:
             if self.current_char in " \t":
                 self.advance()
 
-            if self.current_char == "#":
+            elif self.current_char == "#":
                 self.skip_line()
+
+            elif self.current_char in ";\n":
+                tokens.append(Token(TT_NEWLINE, pos_start=self.pos))
+                self.advance()
 
             elif self.current_char in DIGITS:
                 tokens.append(self.make_number())
@@ -112,10 +116,6 @@ class Lexer:
 
             elif self.current_char == '"':
                 tokens.append(self.make_str())
-
-            elif self.current_char in ";\n":
-                tokens.append(Token(TT_NEWLINE, pos_start=self.pos))
-                self.advance()
 
             elif self.current_char == "+":
                 tokens.append(Token(TT_PLUS, pos_start=self.pos))
@@ -607,7 +607,7 @@ class Parser:
                     "int, float, identifier +, - or ), ], VAR, IF, FOR, WHILE, FUN, RETURN, CONTINUE, BREAK OR NOT",
                 )
             )
-        return expr
+        return res.success(expr)
 
     def advance(self):
         self.tok_idx += 1
@@ -912,7 +912,7 @@ class Parser:
         body = res.register(self.statements())
         if res.error:
             return res
-        self.match_value_advance(TT_KEYWORD, "END")
+        self.match_value_advance(res, TT_KEYWORD, "END")
 
         return res.success(
             FunctionDefinitionNode(var_name_tok, arg_name_toks, body, False)
@@ -933,33 +933,33 @@ class Parser:
         res = ParseResult()
         else_case = None
 
-        self.register_advance(res)
-
-        if self.current_tok.type == TT_NEWLINE:
+        if self.current_tok.matches(TT_KEYWORD, "ELSE"):
             self.register_advance(res)
-            statements = res.register(self.statements())
-
-            if res.error:
-                return res
-            else_case = (statements, True)
-
-            if self.current_tok.matches(TT_KEYWORD, "END"):
+            if self.current_tok.type == TT_NEWLINE:
                 self.register_advance(res)
+                statements = res.register(self.statements())
+
+                if res.error:
+                    return res
+                else_case = (statements, True)
+
+                if self.current_tok.matches(TT_KEYWORD, "END"):
+                    self.register_advance(res)
+
+                else:
+                    return res.failure(
+                        InvalidSyntaxError(
+                            self.current_tok.pos_start,
+                            self.current_tok.pos_ned,
+                            "Expected 'END",
+                        )
+                    )
 
             else:
-                return res.failure(
-                    InvalidSyntaxError(
-                        self.current_tok.pos_start,
-                        self.current_tok.pos_ned,
-                        "Expected 'END",
-                    )
-                )
-
-        else:
-            expr = res.register(self.statement())
-            if res.error:
-                return res
-            else_case = (expr, False)
+                expr = res.register(self.statement())
+                if res.error:
+                    return res
+                else_case = (expr, False)
 
         return res.success(else_case)
 
@@ -972,7 +972,6 @@ class Parser:
             if res.error:
                 return res
             cases, else_case = all_cases
-
         else:
             else_case = res.register(self.if_expr_c())
             if res.error:
@@ -1852,12 +1851,12 @@ class BuiltInFunction(BaseFunction):
                 RuntimeError(
                     self.pos_start,
                     self.pos_end,
-                    f"Could not finish executing script '{fn}'",
-                    error.as_string(),
+                    f"Could not finish executing script '{fn}' \n Error message: "
+                    + error.as_string(),
                     context,
                 )
             )
-        return RuntimeResult.success(Number.null)
+        return RuntimeResult().success(Number.null)
 
     execute_run.arg_names = ["fn"]
 
@@ -2065,6 +2064,7 @@ class Interpreter:
 
     def visit_IfNode(self, node, context):
         res = RuntimeResult()
+
         for condition, expr, should_return_null in node.cases:
             condition_value = res.register(self.visit(condition, context))
             if res.should_return():
@@ -2074,12 +2074,14 @@ class Interpreter:
                 if res.should_return():
                     return res
                 return res.success(Number.null if should_return_null else expr_value)
-            if node.else_case:
-                expr, should_return_null = node.else_case
-                else_value = res.register(self.visit(expr, context))
-                if res.should_return():
-                    return res
-                return res.success(Number.null if should_return_null else else_value)
+
+        if node.else_case:
+            expr, should_return_null = node.else_case
+            else_value = res.register(self.visit(expr, context))
+            if res.should_return():
+                return res
+            return res.success(Number.null if should_return_null else else_value)
+
         return res.success(Number.null)
 
     def visit_StringNode(self, node, context):

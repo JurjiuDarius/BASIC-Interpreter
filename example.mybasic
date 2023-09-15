@@ -1,0 +1,23 @@
+# 
+PRINT("Hello world!")
+
+FUN add_numbers(a, b)
+    VAR c = a + b
+    RETURN c
+END
+
+PRINT("Put in your age:")
+VAR age = INPUT_INT()
+IF age > 18 THEN
+    PRINT("You can get a driver's licence")
+ELSE PRINT("Wait a bit longer to drive")
+
+
+FUN fibbonacci(index)
+    IF index == 1 THEN RETURN 1
+    IF index == 2 THEN RETURN 2
+    RETURN fibbonacci(index - 1) + fibbonacci(index - 2)
+END
+
+PRINT(fibbonacci(5))
+
