@@ -4,14 +4,14 @@
 
 # Demo
 
-### I wrote an example program as a demo.
+#### I wrote an example program as a demo.
 
-### If you want to try it out, from the prject root, run
+#### If you want to try it out, from the prject root, run
 
-### `python shell.py`
+#### `python shell.py`
 
-### from the project root. Then, from the interpreter terminal, run:
+#### from the project root. Then, from the interpreter terminal, run:
 
-### `RUN("example.mybasic")`
+#### `RUN("example.mybasic")`
 
-### Props to CodePulse's Youtube channel for inspiring this project
+#### Props to CodePulse's Youtube channel for inspiring this project
